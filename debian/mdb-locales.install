@@ -1,0 +1,5 @@
+debian/src/usr/share/locale/mdb-locale.alias usr/share/locale
+debian/src/usr/share/i18n/mdb* usr/share/i18n
+debian/src/usr/share/i18n/MDB-SUPPORTED usr/share/i18n
+debian/src/usr/sbin/mdb-locale-gen usr/sbin
+usr/sbin/mdb-locale-normalizer

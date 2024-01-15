@@ -1,0 +1,82 @@
+# Locale name alias data base.
+# Copyright (C) 1996-2018 Free Software Foundation, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2, or (at your option)
+# any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, see <http://www.gnu.org/licenses/>.
+
+# The format of this file is the same as for the corresponding file of
+# the X Window System, which normally can be found in
+#	/usr/lib/X11/locale/locale.alias
+# A single line contains two fields: an alias and a substitution value.
+# All entries are case independent.
+
+# Note: This file is obsolete and is kept around for the time being for
+# backward compatibility.  Nobody should rely on the names defined here.
+# Locales should always be specified by their full name.
+
+# Note: This file used to contain the following lines:
+#	bokmaal		nb_NO.ISO-8859-1
+#	franc,ais	fr_FR.ISO-8859-1
+# except that the "aa" was actually the byte '\0xE5' (the Latin-1
+# encoding for U+00E5 LATIN SMALL LETTER A WITH RING ABOVE) and the
+# "c," was actually the byte '\xE7' (the Latin-1 encoding for U+00E7
+# LATIN SMALL LETTER C WITH CEDILLA).  These lines were removed
+# because they caused 'locale -a' to output text encoded in Latin-1,
+# which broke applications in UTF-8 locales.  See:
+# https://sourceware.org/bugzilla/show_bug.cgi?id=18412
+
+bokmal		nb_NO.iso88591
+catalan		ca_ES.iso88591
+croatian	hr_HR.iso88592
+czech		cs_CZ.iso88592
+danish          da_DK.iso88591
+dansk		da_DK.iso88591
+deutsch		de_DE.iso88591
+dutch		nl_NL.iso88591
+eesti		et_EE.iso885915
+estonian	et_EE.iso885915
+finnish         fi_FI.iso88591
+french		fr_FR.iso88591
+galego		gl_ES.iso88591
+galician	gl_ES.iso88591
+german		de_DE.iso88591
+greek           el_GR.iso88597
+hebrew          he_IL.iso88598
+hrvatski	hr_HR.iso88592
+hungarian       hu_HU.iso88592
+icelandic       is_IS.iso88591
+italian         it_IT.iso88591
+japanese	ja_JP.eucjp
+japanese.euc	ja_JP.eucjp
+ja_JP		ja_JP.eucjp
+ja_JP.ujis	ja_JP.eucjp
+japanese.sjis	ja_JP.sjis
+korean		ko_KR.euckr
+korean.euc 	ko_KR.euckr
+ko_KR		ko_KR.euckr
+lithuanian      lt_LT.iso885913
+no_NO		nb_NO.iso88591
+no_NO.ISO-8859-1 nb_NO.iso88591
+norwegian       nb_NO.iso88591
+nynorsk		nn_NO.iso88591
+polish          pl_PL.iso88592
+portuguese      pt_PT.iso88591
+romanian        ro_RO.iso88592
+russian         ru_RU.koi8r
+slovak          sk_SK.iso88592
+slovene         sl_SI.iso88592
+slovenian       sl_SI.iso88592
+spanish         es_ES.iso88591
+swedish         sv_SE.iso88591
+thai		th_TH.tis620
+turkish         tr_TR.iso88599

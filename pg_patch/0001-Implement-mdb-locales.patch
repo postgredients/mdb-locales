@@ -1,0 +1,1073 @@
+From 4c3560dac0daf02a6fcf1ebc8fa36cd3e1c5d560 Mon Sep 17 00:00:00 2001
+From: usernamedt <usernamedt@yandex-team.com>
+Date: Mon, 13 Feb 2023 15:00:31 +0800
+Subject: [PATCH] Implement mdb-locales patch
+
+Replace setlocale() and newlocale() glibc calls with the calls to libmdblocales. To control this behaviour, specify the '--with-mdblocales' flag on the build time. If '--with-mdblocales' is specified, Postgres binaries will be dynamically linked with the libmdblocales.
+---
+ configure                                | 126 +++++++++++++++++++++--
+ configure.ac                             |  17 +++
+ src/backend/utils/adt/Makefile           |   3 +-
+ src/backend/utils/adt/mdb.c              |  36 +++++++
+ src/backend/utils/adt/pg_locale.c        |  63 +++++++-----
+ src/backend/utils/mb/mbutils.c           |   3 +-
+ src/bin/initdb/initdb.c                  |  14 +--
+ src/bin/pg_upgrade/check.c               |   2 +
+ src/common/exec.c                        |   4 +-
+ src/include/catalog/pg_proc.dat          |   5 +-
+ src/include/common/mdb_locale.h          |  24 +++++
+ src/include/pg_config.h.in               |   3 +
+ src/interfaces/ecpg/ecpglib/connect.c    |   3 +-
+ src/interfaces/ecpg/ecpglib/descriptor.c |   8 +-
+ src/interfaces/ecpg/ecpglib/execute.c    |   7 +-
+ src/interfaces/libpq/Makefile            |   2 +-
+ src/pl/plperl/plperl.c                   |  19 ++--
+ src/port/chklocale.c                     |  10 +-
+ src/test/locale/test-ctype.c             |   4 +-
+ src/test/regress/expected/misc.out       |   7 ++
+ src/test/regress/sql/misc.sql            |   5 +
+ 21 files changed, 297 insertions(+), 68 deletions(-)
+ create mode 100644 src/backend/utils/adt/mdb.c
+ create mode 100644 src/include/common/mdb_locale.h
+
+diff --git a/configure b/configure
+index 82e45657b2..b1e89f2863 100755
+--- a/configure
++++ b/configure
+@@ -684,6 +684,7 @@ BISON
+ MKDIR_P
+ LN_S
+ TAR
++USE_MDBLOCALES
+ install_bin
+ INSTALL_DATA
+ INSTALL_SCRIPT
+@@ -802,6 +803,7 @@ infodir
+ docdir
+ oldincludedir
+ includedir
++runstatedir
+ localstatedir
+ sharedstatedir
+ sysconfdir
+@@ -872,6 +874,8 @@ with_system_tzdata
+ with_zlib
+ with_lz4
+ with_zstd
++with_gnu_ld
++with_mdblocales
+ with_ssl
+ with_openssl
+ enable_largefile
+@@ -946,6 +950,7 @@ datadir='${datarootdir}'
+ sysconfdir='${prefix}/etc'
+ sharedstatedir='${prefix}/com'
+ localstatedir='${prefix}/var'
++runstatedir='${localstatedir}/run'
+ includedir='${prefix}/include'
+ oldincludedir='/usr/include'
+ docdir='${datarootdir}/doc/${PACKAGE_TARNAME}'
+@@ -1198,6 +1203,15 @@ do
+   | -silent | --silent | --silen | --sile | --sil)
+     silent=yes ;;
+ 
++  -runstatedir | --runstatedir | --runstatedi | --runstated \
++  | --runstate | --runstat | --runsta | --runst | --runs \
++  | --run | --ru | --r)
++    ac_prev=runstatedir ;;
++  -runstatedir=* | --runstatedir=* | --runstatedi=* | --runstated=* \
++  | --runstate=* | --runstat=* | --runsta=* | --runst=* | --runs=* \
++  | --run=* | --ru=* | --r=*)
++    runstatedir=$ac_optarg ;;
++
+   -sbindir | --sbindir | --sbindi | --sbind | --sbin | --sbi | --sb)
+     ac_prev=sbindir ;;
+   -sbindir=* | --sbindir=* | --sbindi=* | --sbind=* | --sbin=* \
+@@ -1335,7 +1349,7 @@ fi
+ for ac_var in	exec_prefix prefix bindir sbindir libexecdir datarootdir \
+ 		datadir sysconfdir sharedstatedir localstatedir includedir \
+ 		oldincludedir docdir infodir htmldir dvidir pdfdir psdir \
+-		libdir localedir mandir
++		libdir localedir mandir runstatedir
+ do
+   eval ac_val=\$$ac_var
+   # Remove trailing slashes.
+@@ -1488,6 +1502,7 @@ Fine tuning of the installation directories:
+   --sysconfdir=DIR        read-only single-machine data [PREFIX/etc]
+   --sharedstatedir=DIR    modifiable architecture-independent data [PREFIX/com]
+   --localstatedir=DIR     modifiable single-machine data [PREFIX/var]
++  --runstatedir=DIR       modifiable per-process data [LOCALSTATEDIR/run]
+   --libdir=DIR            object code libraries [EPREFIX/lib]
+   --includedir=DIR        C header files [PREFIX/include]
+   --oldincludedir=DIR     C header files for non-gcc [/usr/include]
+@@ -1584,6 +1599,8 @@ Optional Packages:
+   --without-zlib          do not use Zlib
+   --with-lz4              build with LZ4 support
+   --with-zstd             build with ZSTD support
++  --with-gnu-ld           assume the C compiler uses GNU ld [default=no]
++  --without-mdblocales    build without MDB locales
+   --with-ssl=LIB          use LIB for SSL/TLS support (openssl)
+   --with-openssl          obsolete spelling of --with-ssl=openssl
+ 
+@@ -2792,7 +2809,6 @@ ac_compiler_gnu=$ac_cv_c_compiler_gnu
+ 
+ 
+ 
+-
+ ac_aux_dir=
+ for ac_dir in config "$srcdir"/config; do
+   if test -f "$ac_dir/install-sh"; then
+@@ -2823,6 +2839,7 @@ ac_configure="$SHELL $ac_aux_dir/configure"  # Please don't use this var.
+ 
+ 
+ 
++ac_configure_args=$(echo "$ac_configure_args" | sed -e "s/ -f\(debug\|file\)-prefix-map=[^' ]*//g")
+ 
+ cat >>confdefs.h <<_ACEOF
+ #define CONFIGURE_ARGS "$ac_configure_args"
+@@ -10027,6 +10044,40 @@ case $INSTALL in
+ esac
+ 
+ 
++#
++# MDB locales
++#
++
++
++
++
++# Check whether --with-mdblocales was given.
++if test "${with_mdblocales+set}" = set; then :
++  withval=$with_mdblocales;
++  case $withval in
++    yes)
++
++$as_echo "#define USE_MDBLOCALES 1" >>confdefs.h
++
++      ;;
++    no)
++      :
++      ;;
++    *)
++      as_fn_error $? "no argument expected for --with-mdblocales option" "$LINENO" 5
++      ;;
++  esac
++
++else
++  with_mdblocales=yes
++
++$as_echo "#define USE_MDBLOCALES 1" >>confdefs.h
++
++fi
++
++
++
++
+ if test -z "$TAR"; then
+   for ac_prog in tar
+ do
+@@ -12601,6 +12652,56 @@ fi
+ 
+ fi
+ 
++if test "$with_mdblocales" = yes; then
++  { $as_echo "$as_me:${as_lineno-$LINENO}: checking for mdb_setlocale in -lmdblocales" >&5
++$as_echo_n "checking for mdb_setlocale in -lmdblocales... " >&6; }
++if ${ac_cv_lib_mdblocales_mdb_setlocale+:} false; then :
++  $as_echo_n "(cached) " >&6
++else
++  ac_check_lib_save_LIBS=$LIBS
++LIBS="-lmdblocales  $LIBS"
++cat confdefs.h - <<_ACEOF >conftest.$ac_ext
++/* end confdefs.h.  */
++
++/* Override any GCC internal prototype to avoid an error.
++   Use char because int might match the return type of a GCC
++   builtin and then its argument prototype would still apply.  */
++#ifdef __cplusplus
++extern "C"
++#endif
++char mdb_setlocale ();
++int
++main ()
++{
++return mdb_setlocale ();
++  ;
++  return 0;
++}
++_ACEOF
++if ac_fn_c_try_link "$LINENO"; then :
++  ac_cv_lib_mdblocales_mdb_setlocale=yes
++else
++  ac_cv_lib_mdblocales_mdb_setlocale=no
++fi
++rm -f core conftest.err conftest.$ac_objext \
++    conftest$ac_exeext conftest.$ac_ext
++LIBS=$ac_check_lib_save_LIBS
++fi
++{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_mdblocales_mdb_setlocale" >&5
++$as_echo "$ac_cv_lib_mdblocales_mdb_setlocale" >&6; }
++if test "x$ac_cv_lib_mdblocales_mdb_setlocale" = xyes; then :
++  cat >>confdefs.h <<_ACEOF
++#define HAVE_LIBMDBLOCALES 1
++_ACEOF
++
++  LIBS="-lmdblocales $LIBS"
++
++else
++  as_fn_error $? "mdblocales library not found" "$LINENO" 5
++fi
++
++fi
++
+ if test "$enable_spinlocks" = yes; then
+ 
+ $as_echo "#define HAVE_SPINLOCKS 1" >>confdefs.h
+@@ -14066,6 +14167,17 @@ else
+ fi
+ 
+ 
++fi
++
++if test "$with_mdblocales" = yes; then
++  ac_fn_c_check_header_mongrel "$LINENO" "mdblocales.h" "ac_cv_header_mdblocales_h" "$ac_includes_default"
++if test "x$ac_cv_header_mdblocales_h" = xyes; then :
++
++else
++  as_fn_error $? "mdblocales header not found." "$LINENO" 5
++fi
++
++
+ fi
+ 
+ if test "$with_gssapi" = yes ; then
+@@ -15341,7 +15453,7 @@ else
+     We can't simply define LARGE_OFF_T to be 9223372036854775807,
+     since some C++ compilers masquerading as C compilers
+     incorrectly reject 9223372036854775807.  */
+-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
++#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
+   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
+ 		       && LARGE_OFF_T % 2147483647 == 1)
+ 		      ? 1 : -1];
+@@ -15387,7 +15499,7 @@ else
+     We can't simply define LARGE_OFF_T to be 9223372036854775807,
+     since some C++ compilers masquerading as C compilers
+     incorrectly reject 9223372036854775807.  */
+-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
++#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
+   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
+ 		       && LARGE_OFF_T % 2147483647 == 1)
+ 		      ? 1 : -1];
+@@ -15411,7 +15523,7 @@ rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
+     We can't simply define LARGE_OFF_T to be 9223372036854775807,
+     since some C++ compilers masquerading as C compilers
+     incorrectly reject 9223372036854775807.  */
+-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
++#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
+   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
+ 		       && LARGE_OFF_T % 2147483647 == 1)
+ 		      ? 1 : -1];
+@@ -15456,7 +15568,7 @@ else
+     We can't simply define LARGE_OFF_T to be 9223372036854775807,
+     since some C++ compilers masquerading as C compilers
+     incorrectly reject 9223372036854775807.  */
+-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
++#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
+   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
+ 		       && LARGE_OFF_T % 2147483647 == 1)
+ 		      ? 1 : -1];
+@@ -15480,7 +15592,7 @@ rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext
+     We can't simply define LARGE_OFF_T to be 9223372036854775807,
+     since some C++ compilers masquerading as C compilers
+     incorrectly reject 9223372036854775807.  */
+-#define LARGE_OFF_T (((off_t) 1 << 62) - 1 + ((off_t) 1 << 62))
++#define LARGE_OFF_T ((((off_t) 1 << 31) << 31) - 1 + (((off_t) 1 << 31) << 31))
+   int off_t_is_large[(LARGE_OFF_T % 2147483629 == 721
+ 		       && LARGE_OFF_T % 2147483647 == 1)
+ 		      ? 1 : -1];
+diff --git a/configure.ac b/configure.ac
+index fcea0bcab4..4aa1e5b895 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -1173,6 +1173,14 @@ case $INSTALL in
+ esac
+ AC_SUBST(install_bin)
+ 
++#
++# MDB locales
++#
++
++PGAC_ARG_BOOL(with, mdblocales, yes, [build without MDB locales],
++              [AC_DEFINE([USE_MDBLOCALES], 1, [Define to 1 to build with MDB locales. (--with-mdblocales)])])
++AC_SUBST(USE_MDBLOCALES)
++
+ PGAC_PATH_PROGS(TAR, tar)
+ AC_PROG_LN_S
+ AC_PROG_MKDIR_P
+@@ -1328,6 +1336,11 @@ failure.  It is possible the compiler isn't looking in the proper directory.
+ Use --without-zlib to disable zlib support.])])
+ fi
+ 
++if test "$with_mdblocales" = yes; then
++  AC_CHECK_LIB(mdblocales, mdb_setlocale, [],
++               [AC_MSG_ERROR([mdblocales library not found])])
++fi
++
+ if test "$enable_spinlocks" = yes; then
+   AC_DEFINE(HAVE_SPINLOCKS, 1, [Define to 1 if you have spinlocks.])
+ else
+@@ -1563,6 +1576,10 @@ if test "$with_zstd" = yes; then
+   AC_CHECK_HEADER(zstd.h, [], [AC_MSG_ERROR([zstd.h header file is required for ZSTD])])
+ fi
+ 
++if test "$with_mdblocales" = yes; then
++  AC_CHECK_HEADER(mdblocales.h, [], [AC_MSG_ERROR([mdblocales header not found.])])
++fi
++
+ if test "$with_gssapi" = yes ; then
+   AC_CHECK_HEADERS(gssapi/gssapi.h, [],
+ 	[AC_CHECK_HEADERS(gssapi.h, [], [AC_MSG_ERROR([gssapi.h header file is required for GSSAPI])])])
+diff --git a/src/backend/utils/adt/Makefile b/src/backend/utils/adt/Makefile
+index 0de0bbb1b8..930bede049 100644
+--- a/src/backend/utils/adt/Makefile
++++ b/src/backend/utils/adt/Makefile
+@@ -118,7 +118,8 @@ OBJS = \
+ 	windowfuncs.o \
+ 	xid.o \
+ 	xid8funcs.o \
+-	xml.o
++	xml.o \
++	mdb.o
+ 
+ # See notes in src/backend/parser/Makefile about the following two rules
+ jsonpath_gram.h: jsonpath_gram.c
+diff --git a/src/backend/utils/adt/mdb.c b/src/backend/utils/adt/mdb.c
+new file mode 100644
+index 0000000000..cc61073fa5
+--- /dev/null
++++ b/src/backend/utils/adt/mdb.c
+@@ -0,0 +1,36 @@
++/*-------------------------------------------------------------------------
++ *
++ * mdb.c
++ *	  mdb routines
++ *
++ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
++ * Portions Copyright (c) 1994, Regents of the University of California
++ *
++ *
++ * IDENTIFICATION
++ *	  src/backend/utils/adt/mdb.c
++ *
++ *-------------------------------------------------------------------------
++ */
++
++
++#include "postgres.h"
++#include "fmgr.h"
++
++/*
++ * mdb_admin_enabled
++ *		Check that mdb locale patch is enabled
++ */
++Datum
++mdb_locale_enabled(PG_FUNCTION_ARGS)
++{
++    bool res;
++
++#if USE_MDBLOCALES
++    res = true;
++#else
++    res = false;
++#endif
++
++	PG_RETURN_BOOL(res);
++}
+diff --git a/src/backend/utils/adt/pg_locale.c b/src/backend/utils/adt/pg_locale.c
+index 9aaaaa960e..e5f3157d4b 100644
+--- a/src/backend/utils/adt/pg_locale.c
++++ b/src/backend/utils/adt/pg_locale.c
+@@ -67,6 +67,7 @@
+ #include "utils/memutils.h"
+ #include "utils/pg_locale.h"
+ #include "utils/syscache.h"
++#include "common/mdb_locale.h"
+ 
+ #ifdef USE_ICU
+ #include <unicode/ucnv.h>
+@@ -179,7 +180,7 @@ pg_perm_setlocale(int category, const char *locale)
+ 	const char *envvar;
+ 
+ #ifndef WIN32
+-	result = setlocale(category, locale);
++	result = SETLOCALE(category, locale);
+ #else
+ 
+ 	/*
+@@ -197,7 +198,7 @@ pg_perm_setlocale(int category, const char *locale)
+ 	}
+ 	else
+ #endif
+-		result = setlocale(category, locale);
++		result = SETLOCALE(category, locale);
+ #endif							/* WIN32 */
+ 
+ 	if (result == NULL)
+@@ -284,7 +285,7 @@ check_locale(int category, const char *locale, char **canonname)
+ 	if (canonname)
+ 		*canonname = NULL;		/* in case of failure */
+ 
+-	save = setlocale(category, NULL);
++	save = SETLOCALE(category, NULL);
+ 	if (!save)
+ 		return false;			/* won't happen, we hope */
+ 
+@@ -292,14 +293,14 @@ check_locale(int category, const char *locale, char **canonname)
+ 	save = pstrdup(save);
+ 
+ 	/* set the locale with setlocale, to see if it accepts it. */
+-	res = setlocale(category, locale);
++	res = SETLOCALE(category, locale);
+ 
+ 	/* save canonical name if requested. */
+ 	if (res && canonname)
+ 		*canonname = pstrdup(res);
+ 
+ 	/* restore old value. */
+-	if (!setlocale(category, save))
++	if (!SETLOCALE(category, save))
+ 		elog(WARNING, "failed to restore old locale \"%s\"", save);
+ 	pfree(save);
+ 
+@@ -523,12 +524,12 @@ PGLC_localeconv(void)
+ 	memset(&worklconv, 0, sizeof(worklconv));
+ 
+ 	/* Save prevailing values of monetary and numeric locales */
+-	save_lc_monetary = setlocale(LC_MONETARY, NULL);
++	save_lc_monetary = SETLOCALE(LC_MONETARY, NULL);
+ 	if (!save_lc_monetary)
+ 		elog(ERROR, "setlocale(NULL) failed");
+ 	save_lc_monetary = pstrdup(save_lc_monetary);
+ 
+-	save_lc_numeric = setlocale(LC_NUMERIC, NULL);
++	save_lc_numeric = SETLOCALE(LC_NUMERIC, NULL);
+ 	if (!save_lc_numeric)
+ 		elog(ERROR, "setlocale(NULL) failed");
+ 	save_lc_numeric = pstrdup(save_lc_numeric);
+@@ -550,7 +551,7 @@ PGLC_localeconv(void)
+ 	 */
+ 
+ 	/* Save prevailing value of ctype locale */
+-	save_lc_ctype = setlocale(LC_CTYPE, NULL);
++	save_lc_ctype = SETLOCALE(LC_CTYPE, NULL);
+ 	if (!save_lc_ctype)
+ 		elog(ERROR, "setlocale(NULL) failed");
+ 	save_lc_ctype = pstrdup(save_lc_ctype);
+@@ -558,11 +559,11 @@ PGLC_localeconv(void)
+ 	/* Here begins the critical section where we must not throw error */
+ 
+ 	/* use numeric to set the ctype */
+-	setlocale(LC_CTYPE, locale_numeric);
++	SETLOCALE(LC_CTYPE, locale_numeric);
+ #endif
+ 
+ 	/* Get formatting information for numeric */
+-	setlocale(LC_NUMERIC, locale_numeric);
++    SETLOCALE(LC_NUMERIC, locale_numeric);
+ 	extlconv = localeconv();
+ 
+ 	/* Must copy data now in case setlocale() overwrites it */
+@@ -572,11 +573,11 @@ PGLC_localeconv(void)
+ 
+ #ifdef WIN32
+ 	/* use monetary to set the ctype */
+-	setlocale(LC_CTYPE, locale_monetary);
++	SETLOCALE(LC_CTYPE, locale_monetary);
+ #endif
+ 
+ 	/* Get formatting information for monetary */
+-	setlocale(LC_MONETARY, locale_monetary);
++    SETLOCALE(LC_MONETARY, locale_monetary);
+ 	extlconv = localeconv();
+ 
+ 	/* Must copy data now in case setlocale() overwrites it */
+@@ -606,12 +607,12 @@ PGLC_localeconv(void)
+ 	 * should fail.
+ 	 */
+ #ifdef WIN32
+-	if (!setlocale(LC_CTYPE, save_lc_ctype))
++	if (!SETLOCALE(LC_CTYPE, save_lc_ctype))
+ 		elog(FATAL, "failed to restore LC_CTYPE to \"%s\"", save_lc_ctype);
+ #endif
+-	if (!setlocale(LC_MONETARY, save_lc_monetary))
++	if (!SETLOCALE(LC_MONETARY, save_lc_monetary))
+ 		elog(FATAL, "failed to restore LC_MONETARY to \"%s\"", save_lc_monetary);
+-	if (!setlocale(LC_NUMERIC, save_lc_numeric))
++	if (!SETLOCALE(LC_NUMERIC, save_lc_numeric))
+ 		elog(FATAL, "failed to restore LC_NUMERIC to \"%s\"", save_lc_numeric);
+ 
+ 	/*
+@@ -795,7 +796,7 @@ cache_locale_time(void)
+ 	 */
+ 
+ 	/* Save prevailing value of time locale */
+-	save_lc_time = setlocale(LC_TIME, NULL);
++	save_lc_time = SETLOCALE(LC_TIME, NULL);
+ 	if (!save_lc_time)
+ 		elog(ERROR, "setlocale(NULL) failed");
+ 	save_lc_time = pstrdup(save_lc_time);
+@@ -810,16 +811,16 @@ cache_locale_time(void)
+ 	 */
+ 
+ 	/* Save prevailing value of ctype locale */
+-	save_lc_ctype = setlocale(LC_CTYPE, NULL);
++	save_lc_ctype = SETLOCALE(LC_CTYPE, NULL);
+ 	if (!save_lc_ctype)
+ 		elog(ERROR, "setlocale(NULL) failed");
+ 	save_lc_ctype = pstrdup(save_lc_ctype);
+ 
+ 	/* use lc_time to set the ctype */
+-	setlocale(LC_CTYPE, locale_time);
++	SETLOCALE(LC_CTYPE, locale_time);
+ #endif
+ 
+-	setlocale(LC_TIME, locale_time);
++    SETLOCALE(LC_TIME, locale_time);
+ 
+ 	/* We use times close to current time as data for strftime(). */
+ 	timenow = time(NULL);
+@@ -868,10 +869,10 @@ cache_locale_time(void)
+ 	 * failure to do so is fatal.
+ 	 */
+ #ifdef WIN32
+-	if (!setlocale(LC_CTYPE, save_lc_ctype))
++	if (!SETLOCALE(LC_CTYPE, save_lc_ctype))
+ 		elog(FATAL, "failed to restore LC_CTYPE to \"%s\"", save_lc_ctype);
+ #endif
+-	if (!setlocale(LC_TIME, save_lc_time))
++	if (!SETLOCALE(LC_TIME, save_lc_time))
+ 		elog(FATAL, "failed to restore LC_TIME to \"%s\"", save_lc_time);
+ 
+ 	/*
+@@ -1290,7 +1291,7 @@ lc_collate_is_c(Oid collation)
+ 
+ 		if (result >= 0)
+ 			return (bool) result;
+-		localeptr = setlocale(LC_COLLATE, NULL);
++		localeptr = SETLOCALE(LC_COLLATE, NULL);
+ 		if (!localeptr)
+ 			elog(ERROR, "invalid LC_COLLATE setting");
+ 
+@@ -1343,7 +1344,7 @@ lc_ctype_is_c(Oid collation)
+ 
+ 		if (result >= 0)
+ 			return (bool) result;
+-		localeptr = setlocale(LC_CTYPE, NULL);
++		localeptr = SETLOCALE(LC_CTYPE, NULL);
+ 		if (!localeptr)
+ 			elog(ERROR, "invalid LC_CTYPE setting");
+ 
+@@ -1534,8 +1535,10 @@ pg_newlocale_from_collation(Oid collid)
+ 				/* Normal case where they're the same */
+ 				errno = 0;
+ #ifndef WIN32
+-				loc = newlocale(LC_COLLATE_MASK | LC_CTYPE_MASK, collcollate,
++
++				loc = NEWLOCALE(LC_COLLATE_MASK | LC_CTYPE_MASK, collcollate,
+ 								NULL);
++
+ #else
+ 				loc = _create_locale(LC_ALL, collcollate);
+ #endif
+@@ -1549,11 +1552,11 @@ pg_newlocale_from_collation(Oid collid)
+ 				locale_t	loc1;
+ 
+ 				errno = 0;
+-				loc1 = newlocale(LC_COLLATE_MASK, collcollate, NULL);
++				loc1 = NEWLOCALE(LC_COLLATE_MASK, collcollate, NULL);
+ 				if (!loc1)
+ 					report_newlocale_failure(collcollate);
+ 				errno = 0;
+-				loc = newlocale(LC_CTYPE_MASK, collctype, loc1);
++				loc = NEWLOCALE(LC_CTYPE_MASK, collctype, loc1);
+ 				if (!loc)
+ 					report_newlocale_failure(collctype);
+ #else
+@@ -1678,12 +1681,16 @@ get_collation_actual_version(char collprovider, const char *collcollate)
+ 	{
+ #if defined(__GLIBC__)
+ 		/* Use the glibc version because we don't have anything better. */
+-		collversion = pstrdup(gnu_get_libc_version());
++#ifdef USE_MDBLOCALES
++		collversion = pstrdup(mdb_localesversion());
++#else
++        collversion = pstrdup(gnu_get_libc_version());
++#endif
+ #elif defined(LC_VERSION_MASK)
+ 		locale_t	loc;
+ 
+ 		/* Look up FreeBSD collation version. */
+-		loc = newlocale(LC_COLLATE, collcollate, NULL);
++		loc = NEWLOCALE(LC_COLLATE, collcollate, NULL);
+ 		if (loc)
+ 		{
+ 			collversion =
+diff --git a/src/backend/utils/mb/mbutils.c b/src/backend/utils/mb/mbutils.c
+index 67a1ab2ab2..e25b920ba8 100644
+--- a/src/backend/utils/mb/mbutils.c
++++ b/src/backend/utils/mb/mbutils.c
+@@ -41,6 +41,7 @@
+ #include "utils/memutils.h"
+ #include "utils/syscache.h"
+ #include "varatt.h"
++#include "common/mdb_locale.h"
+ 
+ /*
+  * We maintain a simple linked list caching the fmgr lookup info for the
+@@ -1237,7 +1238,7 @@ pg_bind_textdomain_codeset(const char *domainname)
+ 	int			new_msgenc;
+ 
+ #ifndef WIN32
+-	const char *ctype = setlocale(LC_CTYPE, NULL);
++	const char *ctype = SETLOCALE(LC_CTYPE, NULL);
+ 
+ 	if (pg_strcasecmp(ctype, "C") == 0 || pg_strcasecmp(ctype, "POSIX") == 0)
+ #endif
+diff --git a/src/bin/initdb/initdb.c b/src/bin/initdb/initdb.c
+index 8b84e230f1..620843c5a2 100644
+--- a/src/bin/initdb/initdb.c
++++ b/src/bin/initdb/initdb.c
+@@ -80,6 +80,7 @@
+ #include "getopt_long.h"
+ #include "mb/pg_wchar.h"
+ #include "miscadmin.h"
++#include "common/mdb_locale.h"
+ 
+ 
+ /* Ideally this would be in a .h file, but it hardly seems worth the trouble */
+@@ -2074,12 +2075,13 @@ locale_date_order(const char *locale)
+ 
+ 	result = DATEORDER_MDY;		/* default */
+ 
+-	save = setlocale(LC_TIME, NULL);
++	save = SETLOCALE(LC_TIME, NULL);
++
+ 	if (!save)
+ 		return result;
+ 	save = pg_strdup(save);
+ 
+-	setlocale(LC_TIME, locale);
++    SETLOCALE(LC_TIME, locale);
+ 
+ 	memset(&testtime, 0, sizeof(testtime));
+ 	testtime.tm_mday = 22;
+@@ -2088,7 +2090,7 @@ locale_date_order(const char *locale)
+ 
+ 	res = my_strftime(buf, sizeof(buf), "%x", &testtime);
+ 
+-	setlocale(LC_TIME, save);
++    SETLOCALE(LC_TIME, save);
+ 	free(save);
+ 
+ 	if (res == 0)
+@@ -2132,7 +2134,7 @@ check_locale_name(int category, const char *locale, char **canonname)
+ 	if (canonname)
+ 		*canonname = NULL;		/* in case of failure */
+ 
+-	save = setlocale(category, NULL);
++	save = SETLOCALE(category, NULL);
+ 	if (!save)
+ 		pg_fatal("setlocale() failed");
+ 
+@@ -2144,14 +2146,14 @@ check_locale_name(int category, const char *locale, char **canonname)
+ 		locale = "";
+ 
+ 	/* set the locale with setlocale, to see if it accepts it. */
+-	res = setlocale(category, locale);
++	res = SETLOCALE(category, locale);
+ 
+ 	/* save canonical name if requested. */
+ 	if (res && canonname)
+ 		*canonname = pg_strdup(res);
+ 
+ 	/* restore old value. */
+-	if (!setlocale(category, save))
++	if (!SETLOCALE(category, save))
+ 		pg_fatal("failed to restore old locale \"%s\"", save);
+ 	free(save);
+ 
+diff --git a/src/bin/pg_upgrade/check.c b/src/bin/pg_upgrade/check.c
+index f1cd14ec9b..540add579e 100644
+--- a/src/bin/pg_upgrade/check.c
++++ b/src/bin/pg_upgrade/check.c
+@@ -14,6 +14,8 @@
+ #include "fe_utils/string_utils.h"
+ #include "mb/pg_wchar.h"
+ #include "pg_upgrade.h"
++#include "common/mdb_locale.h"
++
+ 
+ static void check_new_cluster_is_empty(void);
+ static void check_is_install_user(ClusterInfo *cluster);
+diff --git a/src/common/exec.c b/src/common/exec.c
+index f209b934df..41a4308d0c 100644
+--- a/src/common/exec.c
++++ b/src/common/exec.c
+@@ -33,6 +33,8 @@
+ #include <sys/stat.h>
+ #include <sys/wait.h>
+ #include <unistd.h>
++#include "common/mdb_locale.h"
++
+ 
+ #ifdef EXEC_BACKEND
+ #if defined(HAVE_SYS_PERSONALITY_H)
+@@ -441,7 +443,7 @@ set_pglocale_pgservice(const char *argv0, const char *app)
+ 	/* don't set LC_ALL in the backend */
+ 	if (strcmp(app, PG_TEXTDOMAIN("postgres")) != 0)
+ 	{
+-		setlocale(LC_ALL, "");
++		SETLOCALE(LC_ALL, "");
+ 
+ 		/*
+ 		 * One could make a case for reproducing here PostmasterMain()'s test
+diff --git a/src/include/catalog/pg_proc.dat b/src/include/catalog/pg_proc.dat
+index 6996073989..bbae8d6ee4 100644
+--- a/src/include/catalog/pg_proc.dat
++++ b/src/include/catalog/pg_proc.dat
+@@ -12034,7 +12034,6 @@
+   proname => 'brin_minmax_multi_summary_send', provolatile => 's',
+   prorettype => 'bytea', proargtypes => 'pg_brin_minmax_multi_summary',
+   prosrc => 'brin_minmax_multi_summary_send' },
+-
+ { oid => '6291', descr => 'arbitrary value from among input values',
+   proname => 'any_value', prokind => 'a', proisstrict => 'f',
+   prorettype => 'anyelement', proargtypes => 'anyelement',
+@@ -12042,5 +12041,7 @@
+ { oid => '6292', descr => 'aggregate transition function',
+   proname => 'any_value_transfn', prorettype => 'anyelement',
+   proargtypes => 'anyelement anyelement', prosrc => 'any_value_transfn' },
+-
++{ oid => '16383', descr => 'contains',
++  proname => 'mdb_locale_enabled', prorettype => 'bool',
++  proargtypes => '', prosrc => 'mdb_locale_enabled' },
+ ]
+diff --git a/src/include/common/mdb_locale.h b/src/include/common/mdb_locale.h
+new file mode 100644
+index 0000000000..61290b2d93
+--- /dev/null
++++ b/src/include/common/mdb_locale.h
+@@ -0,0 +1,24 @@
++/*-------------------------------------------------------------------------
++ *
++ * locale_mdb.h
++ *	  Generic headers for custom MDB-locales patch.
++ *
++ * IDENTIFICATION
++ *		  src/include/common/mdb_locale.h
++ *
++ *-------------------------------------------------------------------------
++ */
++
++#ifndef PG_MDB_LOCALE_H
++#define PG_MDB_LOCALE_H
++
++#ifdef USE_MDBLOCALES
++#include <mdblocales.h>
++#define SETLOCALE(category, locale) mdb_setlocale(category, locale)
++#define NEWLOCALE(category, locale, base) mdb_newlocale(category, locale, base)
++#else
++#define SETLOCALE(category, locale) setlocale(category, locale)
++#define NEWLOCALE(category, locale, base) newlocale(category, locale, base)
++#endif
++
++#endif							/* PG_MDB_LOCALE_H */
+\ No newline at end of file
+diff --git a/src/include/pg_config.h.in b/src/include/pg_config.h.in
+index a45e218975..d72297430b 100644
+--- a/src/include/pg_config.h.in
++++ b/src/include/pg_config.h.in
+@@ -654,6 +654,9 @@
+ /* A string containing the version number, platform, and C compiler */
+ #undef PG_VERSION_STR
+ 
++/* Use mdb locales or not  */
++#undef USE_MDBLOCALES
++
+ /* Define to 1 to allow profiling output to be saved separately for each
+    process. */
+ #undef PROFILE_PID_DIR
+diff --git a/src/interfaces/ecpg/ecpglib/connect.c b/src/interfaces/ecpg/ecpglib/connect.c
+index db0bae1fe0..73c0356399 100644
+--- a/src/interfaces/ecpg/ecpglib/connect.c
++++ b/src/interfaces/ecpg/ecpglib/connect.c
+@@ -9,6 +9,7 @@
+ #include "ecpglib_extern.h"
+ #include "ecpgtype.h"
+ #include "sqlca.h"
++#include "common/mdb_locale.h"
+ 
+ #ifdef HAVE_USELOCALE
+ locale_t	ecpg_clocale = (locale_t) 0;
+@@ -516,7 +517,7 @@ ECPGconnect(int lineno, int c, const char *name, const char *user, const char *p
+ #ifdef HAVE_USELOCALE
+ 	if (!ecpg_clocale)
+ 	{
+-		ecpg_clocale = newlocale(LC_NUMERIC_MASK, "C", (locale_t) 0);
++		ecpg_clocale = NEWLOCALE(LC_NUMERIC_MASK, "C", (locale_t) 0);
+ 		if (!ecpg_clocale)
+ 		{
+ #ifdef ENABLE_THREAD_SAFETY
+diff --git a/src/interfaces/ecpg/ecpglib/descriptor.c b/src/interfaces/ecpg/ecpglib/descriptor.c
+index 883a210a81..3781e9740e 100644
+--- a/src/interfaces/ecpg/ecpglib/descriptor.c
++++ b/src/interfaces/ecpg/ecpglib/descriptor.c
+@@ -15,6 +15,8 @@
+ #include "sql3types.h"
+ #include "sqlca.h"
+ #include "sqlda.h"
++#include "common/mdb_locale.h"
++
+ 
+ static void descriptor_free(struct descriptor *desc);
+ 
+@@ -500,8 +502,8 @@ ECPGget_desc(int lineno, const char *desc_name, int index,...)
+ #ifdef HAVE__CONFIGTHREADLOCALE
+ 		stmt.oldthreadlocale = _configthreadlocale(_ENABLE_PER_THREAD_LOCALE);
+ #endif
+-		stmt.oldlocale = ecpg_strdup(setlocale(LC_NUMERIC, NULL), lineno);
+-		setlocale(LC_NUMERIC, "C");
++		stmt.oldlocale = ecpg_strdup(SETLOCALE(LC_NUMERIC, NULL), lineno);
++        SETLOCALE(LC_NUMERIC, "C");
+ #endif
+ 
+ 		/* desperate try to guess something sensible */
+@@ -514,7 +516,7 @@ ECPGget_desc(int lineno, const char *desc_name, int index,...)
+ #else
+ 		if (stmt.oldlocale)
+ 		{
+-			setlocale(LC_NUMERIC, stmt.oldlocale);
++            SETLOCALE(LC_NUMERIC, stmt.oldlocale);
+ 			ecpg_free(stmt.oldlocale);
+ 		}
+ #ifdef HAVE__CONFIGTHREADLOCALE
+diff --git a/src/interfaces/ecpg/ecpglib/execute.c b/src/interfaces/ecpg/ecpglib/execute.c
+index 93926fd4fb..bb9fe57727 100644
+--- a/src/interfaces/ecpg/ecpglib/execute.c
++++ b/src/interfaces/ecpg/ecpglib/execute.c
+@@ -31,6 +31,7 @@
+ #include "sqlca.h"
+ #include "sqlda-compat.h"
+ #include "sqlda-native.h"
++#include "common/mdb_locale.h"
+ 
+ /*
+  *	This function returns a newly malloced string that has ' and \
+@@ -2000,13 +2001,13 @@ ecpg_do_prologue(int lineno, const int compat, const int force_indicator,
+ #ifdef HAVE__CONFIGTHREADLOCALE
+ 	stmt->oldthreadlocale = _configthreadlocale(_ENABLE_PER_THREAD_LOCALE);
+ #endif
+-	stmt->oldlocale = ecpg_strdup(setlocale(LC_NUMERIC, NULL), lineno);
++	stmt->oldlocale = ecpg_strdup(SETLOCALE(LC_NUMERIC, NULL), lineno);
+ 	if (stmt->oldlocale == NULL)
+ 	{
+ 		ecpg_do_epilogue(stmt);
+ 		return false;
+ 	}
+-	setlocale(LC_NUMERIC, "C");
++    SETLOCALE(LC_NUMERIC, "C");
+ #endif
+ 
+ 	/*
+@@ -2220,7 +2221,7 @@ ecpg_do_epilogue(struct statement *stmt)
+ 		uselocale(stmt->oldlocale);
+ #else
+ 	if (stmt->oldlocale)
+-		setlocale(LC_NUMERIC, stmt->oldlocale);
++        SETLOCALE(LC_NUMERIC, stmt->oldlocale);
+ #ifdef HAVE__CONFIGTHREADLOCALE
+ 
+ 	/*
+diff --git a/src/interfaces/libpq/Makefile b/src/interfaces/libpq/Makefile
+index 0919d8f32f..e355856b7d 100644
+--- a/src/interfaces/libpq/Makefile
++++ b/src/interfaces/libpq/Makefile
+@@ -84,7 +84,7 @@ endif
+ # that are built correctly for use in a shlib.
+ SHLIB_LINK_INTERNAL = -lpgcommon_shlib -lpgport_shlib
+ ifneq ($(PORTNAME), win32)
+-SHLIB_LINK += $(filter -lcrypt -ldes -lcom_err -lcrypto -lk5crypto -lkrb5 -lgssapi_krb5 -lgss -lgssapi -lssl -lsocket -lnsl -lresolv -lintl -lm, $(LIBS)) $(LDAP_LIBS_FE) $(PTHREAD_LIBS)
++SHLIB_LINK += $(filter -lcrypt -ldes -lcom_err -lcrypto -lk5crypto -lkrb5 -lgssapi_krb5 -lgss -lgssapi -lssl -lsocket -lnsl -lresolv -lintl -lm -lmdblocales, $(LIBS)) $(LDAP_LIBS_FE) $(PTHREAD_LIBS)
+ else
+ SHLIB_LINK += $(filter -lcrypt -ldes -lcom_err -lcrypto -lk5crypto -lkrb5 -lgssapi32 -lssl -lsocket -lnsl -lresolv -lintl -lm $(PTHREAD_LIBS), $(LIBS)) $(LDAP_LIBS_FE)
+ endif
+diff --git a/src/pl/plperl/plperl.c b/src/pl/plperl/plperl.c
+index 863864253f..7fb585b4bd 100644
+--- a/src/pl/plperl/plperl.c
++++ b/src/pl/plperl/plperl.c
+@@ -37,6 +37,7 @@
+ #include "utils/rel.h"
+ #include "utils/syscache.h"
+ #include "utils/typcache.h"
++#include "common/mdb_locale.h"
+ 
+ /* define our text domain for translations */
+ #undef TEXTDOMAIN
+@@ -740,15 +741,15 @@ plperl_init_interp(void)
+ 			   *save_numeric,
+ 			   *save_time;
+ 
+-	loc = setlocale(LC_COLLATE, NULL);
++	loc = SETLOCALE(LC_COLLATE, NULL);
+ 	save_collate = loc ? pstrdup(loc) : NULL;
+-	loc = setlocale(LC_CTYPE, NULL);
++	loc = SETLOCALE(LC_CTYPE, NULL);
+ 	save_ctype = loc ? pstrdup(loc) : NULL;
+-	loc = setlocale(LC_MONETARY, NULL);
++	loc = SETLOCALE(LC_MONETARY, NULL);
+ 	save_monetary = loc ? pstrdup(loc) : NULL;
+-	loc = setlocale(LC_NUMERIC, NULL);
++	loc = SETLOCALE(LC_NUMERIC, NULL);
+ 	save_numeric = loc ? pstrdup(loc) : NULL;
+-	loc = setlocale(LC_TIME, NULL);
++	loc = SETLOCALE(LC_TIME, NULL);
+ 	save_time = loc ? pstrdup(loc) : NULL;
+ 
+ #define PLPERL_RESTORE_LOCALE(name, saved) \
+@@ -4181,7 +4182,7 @@ static char *
+ setlocale_perl(int category, char *locale)
+ {
+ 	dTHX;
+-	char	   *RETVAL = setlocale(category, locale);
++	char	   *RETVAL = SETLOCALE(category, locale);
+ 
+ 	if (RETVAL)
+ 	{
+@@ -4196,7 +4197,7 @@ setlocale_perl(int category, char *locale)
+ 
+ #ifdef LC_ALL
+ 			if (category == LC_ALL)
+-				newctype = setlocale(LC_CTYPE, NULL);
++				newctype = SETLOCALE(LC_CTYPE, NULL);
+ 			else
+ #endif
+ 				newctype = RETVAL;
+@@ -4214,7 +4215,7 @@ setlocale_perl(int category, char *locale)
+ 
+ #ifdef LC_ALL
+ 			if (category == LC_ALL)
+-				newcoll = setlocale(LC_COLLATE, NULL);
++				newcoll = SETLOCALE(LC_COLLATE, NULL);
+ 			else
+ #endif
+ 				newcoll = RETVAL;
+@@ -4233,7 +4234,7 @@ setlocale_perl(int category, char *locale)
+ 
+ #ifdef LC_ALL
+ 			if (category == LC_ALL)
+-				newnum = setlocale(LC_NUMERIC, NULL);
++				newnum = SETLOCALE(LC_NUMERIC, NULL);
+ 			else
+ #endif
+ 				newnum = RETVAL;
+diff --git a/src/port/chklocale.c b/src/port/chklocale.c
+index 6fa6810a46..aa60adb922 100644
+--- a/src/port/chklocale.c
++++ b/src/port/chklocale.c
+@@ -18,6 +18,8 @@
+ #else
+ #include "postgres_fe.h"
+ #endif
++#include "common/mdb_locale.h"
++
+ 
+ #ifdef HAVE_LANGINFO_H
+ #include <langinfo.h>
+@@ -319,7 +321,7 @@ pg_get_encoding_from_locale(const char *ctype, bool write_message)
+ 			pg_strcasecmp(ctype, "POSIX") == 0)
+ 			return PG_SQL_ASCII;
+ 
+-		save = setlocale(LC_CTYPE, NULL);
++		save = SETLOCALE(LC_CTYPE, NULL);
+ 		if (!save)
+ 			return -1;			/* setlocale() broken? */
+ 		/* must copy result, or it might change after setlocale */
+@@ -327,7 +329,7 @@ pg_get_encoding_from_locale(const char *ctype, bool write_message)
+ 		if (!save)
+ 			return -1;			/* out of memory; unlikely */
+ 
+-		name = setlocale(LC_CTYPE, ctype);
++		name = SETLOCALE(LC_CTYPE, ctype);
+ 		if (!name)
+ 		{
+ 			free(save);
+@@ -342,13 +344,13 @@ pg_get_encoding_from_locale(const char *ctype, bool write_message)
+ 		sys = win32_langinfo(name);
+ #endif
+ 
+-		setlocale(LC_CTYPE, save);
++		SETLOCALE(LC_CTYPE, save);
+ 		free(save);
+ 	}
+ 	else
+ 	{
+ 		/* much easier... */
+-		ctype = setlocale(LC_CTYPE, NULL);
++		ctype = SETLOCALE(LC_CTYPE, NULL);
+ 		if (!ctype)
+ 			return -1;			/* setlocale() broken? */
+ 
+diff --git a/src/test/locale/test-ctype.c b/src/test/locale/test-ctype.c
+index a3f896c5ec..10c2b49cb9 100644
+--- a/src/test/locale/test-ctype.c
++++ b/src/test/locale/test-ctype.c
+@@ -23,6 +23,8 @@ the author shall be liable for any damage, etc.
+ #include <stdio.h>
+ #include <locale.h>
+ #include <ctype.h>
++#include "common/mdb_locale.h"
++
+ 
+ char	   *flag(int b);
+ void		describe_char(int c);
+@@ -62,7 +64,7 @@ main()
+ 	short		c;
+ 	char	   *cur_locale;
+ 
+-	cur_locale = setlocale(LC_ALL, "");
++	cur_locale = SETLOCALE(LC_ALL, "");
+ 	if (cur_locale)
+ 		fprintf(stderr, "Successfully set locale to \"%s\"\n", cur_locale);
+ 	else
+diff --git a/src/test/regress/expected/misc.out b/src/test/regress/expected/misc.out
+index 6e816c57f1..d2cbc8f87f 100644
+--- a/src/test/regress/expected/misc.out
++++ b/src/test/regress/expected/misc.out
+@@ -396,3 +396,10 @@ SELECT *, (equipment(CAST((h.*) AS hobbies_r))).name FROM hobbies_r h;
+ --
+ -- rewrite rules
+ --
++--- mdb-related
++SELECT mdb_locale_enabled();
++ mdb_locale_enabled 
++--------------------
++ t
++(1 row)
++
+diff --git a/src/test/regress/sql/misc.sql b/src/test/regress/sql/misc.sql
+index 165a2e175f..597186ffe4 100644
+--- a/src/test/regress/sql/misc.sql
++++ b/src/test/regress/sql/misc.sql
+@@ -273,3 +273,8 @@ SELECT *, (equipment(CAST((h.*) AS hobbies_r))).name FROM hobbies_r h;
+ --
+ -- rewrite rules
+ --
++
++--- mdb-related
++
++SELECT mdb_locale_enabled();
++
+-- 
+2.39.1
+
