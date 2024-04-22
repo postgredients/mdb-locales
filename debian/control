@@ -14,7 +14,7 @@ Package: libmdblocales-dev
 Section: libdevel
 Architecture: any
 Multi-Arch: same
-Depends: libmdblocales1 (= 0.0.1-1)
+Depends: libmdblocales1
 Description: libmdblocales dev lib (headers included)
 
 Package: libmdblocales1
