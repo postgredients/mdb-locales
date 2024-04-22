@@ -75,5 +75,6 @@ jobs:
       run: |
         cd postgres-src
         git apply ../src/pg_patch/0001-Implement-mdb-locales.patch
+        ./configure --enable-cassert --enable-debug
         make -s
         sudo make install 
