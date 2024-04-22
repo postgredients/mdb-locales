@@ -63,7 +63,7 @@ jobs:
           ${{ env.LIBMDBLOCALES_DEB_NAME }}
         key: ${{ env.MDB_LOCALES_DEB_CACHE_KEY }}
     - name: Fail if no cached packages
-      if: steps.cache-images.outputs.cache-hit != 'true'
+      if: steps.cache-mdb-locales.outputs.cache-hit != 'true'
       run: |
         echo "Failed to fetch cached docker images. Will now exit..."
         exit 1
@@ -71,3 +71,9 @@ jobs:
       run: sudo dpkg -i *.deb
     - name: Install PostgreSQL build deps
       run: sudo apt-get install build-essential libreadline-dev zlib1g-dev flex bison libxml2-dev libxslt-dev libssl-dev libxml2-utils xsltproc ccache pkg-config
+    - name: Apply patch
+      run: |
+        cd postgres-src
+        git apply ../src/pg_patch/0001-Implement-mdb-locales.patch
+        make -s
+        sudo make install 
