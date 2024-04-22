@@ -86,7 +86,8 @@ jobs:
       run: |
         mkdir -p pg_data_dir
         initdb -D pg_data_dir
-        postgres -D pg_data_dir -p 5432
+        pg_ctl -D pg_data_dir -l logfile start
+        sleep 15
         createdb -p 5432 locales-test
         psql -p 5432 locales-test -c "select COUNT(*)>0 from pg_collation where collprovider='c' and collname not in ('C', 'POSIX', 'ucs_basic', 'C.UTF-8') and collversion != '2.27';" | grep f
         psql -p 5432 locales-test -c "SELECT '1-1' < '11' COLLATE \"en_US.utf8\"" | grep f
