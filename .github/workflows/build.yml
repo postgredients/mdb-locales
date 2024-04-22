@@ -6,15 +6,24 @@ on:
   pull_request:
     branches: [ "main" ]
 
-jobs:
-  build:
+env:
+  MDB_LOCALES_DEB_CACHE_KEY: 'mdb-locales-deb'
 
-    runs-on: ubuntu-latest
+jobs:
+  build_mdb_locales:
+
+    runs-on: ubuntu-22.04
 
     steps:
     - uses: actions/checkout@v3
       with:
         path: ./src
+    - name: Cache resulting deb packages
+      id: cache-mdb-locales
+      uses: actions/cache@v4
+      with:
+        path: './*.deb'
+        key: ${{ env.MDB_LOCALES_DEB_CACHE_KEY }}
     - name: Install build deps
       run: |
         sudo apt update
@@ -28,5 +37,25 @@ jobs:
         path: |
           ./mdb-locales*
           ./libmdblocales*
+    - name: Install generated deb packages
+      run: sudo dpkg -i *.deb
+
+  patch_and_build_postgresql:
+    runs-on: ubuntu-22.04
+    needs: [ build_mdb_locales ]
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        path: ./src
+    - name: Load mdb-locales packages
+      id: cache-mdb-locales
+      uses: actions/cache@v4
+      with:
+        key: ${{ env.MDB_LOCALES_DEB_CACHE_KEY }}
+    - name: Fail if no cached packages
+      if: steps.cache-images.outputs.cache-hit != 'true'
+      run: |
+        echo "Failed to fetch cached docker images. Will now exit..."
+        exit 1
     - name: Install generated deb packages
       run: sudo dpkg -i *.deb
