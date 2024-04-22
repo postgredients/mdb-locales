@@ -74,10 +74,17 @@ jobs:
       run: sudo dpkg -i *.deb
     - name: Install PostgreSQL build deps
       run: sudo apt-get install build-essential libreadline-dev zlib1g-dev flex bison libxml2-dev libxslt-dev libssl-dev libxml2-utils xsltproc ccache pkg-config
-    - name: Apply patch
+    - name: Apply patch and install PostgreSQL
       run: |
         cd postgres-src
         git apply ../src/pg_patch/0001-Implement-mdb-locales.patch
         ./configure --enable-cassert --enable-debug
         make -s
         sudo make install 
+    - name: Init demo cluster
+      run: |
+        mkdir -p pg_data_dir
+        initdb -D pg_data_dir
+        postgres -D pg_data_dir -p 5432
+        createdb -p 5432 locales-test
+        psql -p 5432 locales-test -c "select COUNT(*) from pg_collation where collprovider='c' and collname not in ('C', 'POSIX', 'ucs_basic', 'C.UTF-8') and collversion != '2.27';"
