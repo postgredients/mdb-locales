@@ -10,6 +10,7 @@ env:
   MDB_LOCALES_DEB_CACHE_KEY: 'mdb-locales-deb'
   MDB_LOCALES_DEB_NAME: 'mdb-locales_0.0.1-1_amd64.deb'
   LIBMDBLOCALES_DEB_NAME: 'libmdblocales1_0.0.1-1_amd64.deb'
+  LIBMDBLOCALES_DEV_DEB_NAME: 'libmdblocales-dev_0.0.1-1_amd64.deb'
 
 jobs:
   build_mdb_locales:
@@ -27,6 +28,7 @@ jobs:
         path: |
           ${{ env.MDB_LOCALES_DEB_NAME }}
           ${{ env.LIBMDBLOCALES_DEB_NAME }}
+          ${{ env.LIBMDBLOCALES_DEV_DEB_NAME }}
         key: ${{ env.MDB_LOCALES_DEB_CACHE_KEY }}
     - name: Install build deps
       run: |
@@ -61,6 +63,7 @@ jobs:
         path: |
           ${{ env.MDB_LOCALES_DEB_NAME }}
           ${{ env.LIBMDBLOCALES_DEB_NAME }}
+          ${{ env.LIBMDBLOCALES_DEV_DEB_NAME }}
         key: ${{ env.MDB_LOCALES_DEB_CACHE_KEY }}
     - name: Fail if no cached packages
       if: steps.cache-mdb-locales.outputs.cache-hit != 'true'
