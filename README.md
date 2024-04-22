@@ -3,10 +3,12 @@ Movable DataBase Locales for PostgreSQL
 
 MDB locales provides static glibc2.27 locales that are independent from the actual glibc version. It allows to avoid index corruptions when moving the existing database between Linux distributions that have major glibc collation changes (such as Ubuntu 18.04 to 22.04 migrations).
 
-MDB locales consists of three parts:
-1. PostgreSQL patch that replaces all glibc locale-related calls with a calls to an external libary (pg_patch)
-2. External library that loads locales from custom path (libmdblocales)
-3. Deb package that install mdb-locales based on locales package from glibc2.27 (mdb-locales)
+Please consult this [PostgreSQL wiki page](https://wiki.postgresql.org/wiki/Locale_data_changes) for more details on the collation change problem. 
+
+MDB locales consist of three parts:
+1. PostgreSQL patch that replaces all glibc locale-related calls with a calls to an external libary ([pg_patch](https://github.com/postgredients/mdb-locales/tree/main/pg_patch))
+2. External library that loads locales from custom path ([libmdblocales](https://github.com/postgredients/mdb-locales/tree/main/libmdblocales))
+3. Deb package that install mdb-locales based on locales package from glibc2.27 ([mdb-locales](https://github.com/postgredients/mdb-locales/tree/main/debian)). 
 
 
 Usage
