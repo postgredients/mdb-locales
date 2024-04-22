@@ -8,6 +8,8 @@ on:
 
 env:
   MDB_LOCALES_DEB_CACHE_KEY: 'mdb-locales-deb'
+  MDB_LOCALES_DEB_NAME: 'mdb-locales_0.0.1-1_amd64.deb'
+  LIBMDBLOCALES_DEB_NAME: 'libmdblocales1_0.0.1-1_amd64.deb'
 
 jobs:
   build_mdb_locales:
@@ -15,14 +17,16 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         path: ./src
     - name: Cache resulting deb packages
       id: cache-mdb-locales
       uses: actions/cache@v4
       with:
-        path: './*.deb'
+        path: |
+          ${{ env.MDB_LOCALES_DEB_NAME }}
+          ${{ env.LIBMDBLOCALES_DEB_NAME }}
         key: ${{ env.MDB_LOCALES_DEB_CACHE_KEY }}
     - name: Install build deps
       run: |
@@ -37,20 +41,26 @@ jobs:
         path: |
           ./mdb-locales*
           ./libmdblocales*
-    - name: Install generated deb packages
-      run: sudo dpkg -i *.deb
 
   patch_and_build_postgresql:
     runs-on: ubuntu-22.04
     needs: [ build_mdb_locales ]
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
       with:
         path: ./src
+    - uses: actions/checkout@v4
+      with:
+        repository: postgres/postgres
+        path: ./postgres-src
+        ref: 'refs/tags/REL_16_0'
     - name: Load mdb-locales packages
       id: cache-mdb-locales
       uses: actions/cache@v4
       with:
+        path: |
+          ${{ env.MDB_LOCALES_DEB_NAME }}
+          ${{ env.LIBMDBLOCALES_DEB_NAME }}
         key: ${{ env.MDB_LOCALES_DEB_CACHE_KEY }}
     - name: Fail if no cached packages
       if: steps.cache-images.outputs.cache-hit != 'true'
@@ -59,3 +69,5 @@ jobs:
         exit 1
     - name: Install generated deb packages
       run: sudo dpkg -i *.deb
+    - name: Install PostgreSQL build deps
+      run: sudo apt-get install build-essential libreadline-dev zlib1g-dev flex bison libxml2-dev libxslt-dev libssl-dev libxml2-utils xsltproc ccache pkg-config
