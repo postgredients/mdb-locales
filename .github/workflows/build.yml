@@ -1,4 +1,4 @@
-name: Build and install deb packages
+name: Build, install and test mdb-locales deb packages
 
 on:
   push:
@@ -39,8 +39,15 @@ jobs:
       run: dpkg-buildpackage -us -uc
     - uses: actions/upload-artifact@v4
       with:
-        name: upload-artifacts
+        name: mdb-locales-build-artifacts
         path: |
+          ./mdb-locales*
+          ./libmdblocales*
+    - name: Release
+      uses: softprops/action-gh-release@v2
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: |
           ./mdb-locales*
           ./libmdblocales*
 
