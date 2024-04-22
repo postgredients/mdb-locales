@@ -31,11 +31,66 @@ cd postgresql
 # uploaded patch has been tested on REL_16_0
 git checkout REL_16_0
 git apply --whitespace=warn ../pg_patch/0001-Implement-mdb-locales.patch
-# flags other than --with-mdblocales are provided only for reference and are not required for this patch
-./configure --enable-cassert --enable-debug  CFLAGS="-ggdb -Og -g3 -fno-omit-frame-pointer" --with-mdblocales --without-icu --without-readline --without-zlib
+# --with-mdblocales is optional (enabled by default)
+./configure --enable-cassert --enable-debug --with-mdblocales
 make
 make install
 ```
+
+4. Run demo cluster:
+```
+mkdir -p pg_data_dir
+initdb -D pg_data_dir
+pg_ctl -D pg_data_dir -l logfile start
+```
+
+5. Test that the collation is glibc-independent:
+```
+~ ldd --version
+ldd (Debian GLIBC 2.31-13+deb11u5) 2.31
+Copyright (C) 2020 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+Written by Roland McGrath and Ulrich Drepper.
+
+# On vanilla PostgreSQL:
+postgres=# select * from pg_collation where collprovider='c';
+  oid  |  collname  | collnamespace | collowner | collprovider | collisdeterministic | collencoding | collcollate | collctype  | collversion
+-------+------------+---------------+-----------+--------------+---------------------+--------------+-------------+------------+-------------
+   950 | C          |            11 |        10 | c            | t                   |           -1 | C           | C          |
+   951 | POSIX      |            11 |        10 | c            | t                   |           -1 | POSIX       | POSIX      |
+ 12545 | ucs_basic  |            11 |        10 | c            | t                   |            6 | C           | C          |
+ 12546 | C.UTF-8    |            11 |        10 | c            | t                   |            6 | C.UTF-8     | C.UTF-8    |
+ 12547 | en_US.utf8 |            11 |        10 | c            | t                   |            6 | en_US.utf8  | en_US.utf8 | 2.31
+ 12548 | en_US      |            11 |        10 | c            | t                   |            6 | en_US.utf8  | en_US.utf8 | 2.31
+(6 rows)
+
+postgres=# SELECT '1-1' < '11' COLLATE "en_US.utf8";
+ ?column?
+----------
+ t
+(1 row)
+
+# On PostgreSQL with mdb-locales patch:
+postgres=# select * from pg_collation where collprovider='c';
+  oid  |  collname  | collnamespace | collowner | collprovider | collisdeterministic | collencoding | collcollate | collctype  | collversion
+-------+------------+---------------+-----------+--------------+---------------------+--------------+-------------+------------+-------------
+   950 | C          |            11 |        10 | c            | t                   |           -1 | C           | C          |
+   951 | POSIX      |            11 |        10 | c            | t                   |           -1 | POSIX       | POSIX      |
+ 12545 | ucs_basic  |            11 |        10 | c            | t                   |            6 | C           | C          |
+ 12546 | C.UTF-8    |            11 |        10 | c            | t                   |            6 | C.UTF-8     | C.UTF-8    |
+ 12547 | en_US.utf8 |            11 |        10 | c            | t                   |            6 | en_US.utf8  | en_US.utf8 | 2.27
+ 12548 | en_US      |            11 |        10 | c            | t                   |            6 | en_US.utf8  | en_US.utf8 | 2.27
+(6 rows)
+
+
+postgres=# SELECT '1-1' < '11' COLLATE "en_US.utf8";
+ ?column?
+----------
+ f
+(1 row)
+```
+
 
 License
 =======
