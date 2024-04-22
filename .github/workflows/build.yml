@@ -3,6 +3,8 @@ name: Build, install and test mdb-locales deb packages
 on:
   push:
     branches: [ "main" ]
+    tags:
+      - 'v*' # Push events to matching v*, i.e. v0.2.19, v0.2.14a
   pull_request:
     branches: [ "main" ]
 
