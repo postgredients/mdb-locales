@@ -58,7 +58,7 @@ EOF
     fi
 
     # Update requested locales
-    mdb-locale-gen
+    mdb-locale-gen --keep-existing
 
 fi
 
