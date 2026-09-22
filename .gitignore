@@ -1,0 +1,14 @@
+
+# added automatically by ya tool
+.aisuite/setup_log.jsonl
+.aisuite/setup_state.json
+.aisuite/setup.lock
+.opencode
+opencode.json
+opencode.jsonc
+.claude
+.codex
+.agents/
+
+# precompiled locales build artifacts (shipped via the deb, not committed)
+debian/src/usr/lib/mdb-locale/

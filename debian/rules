@@ -5,3 +5,9 @@ export DH_VERBOSE = 1
 %:
 	set -ex
 	dh \$@
+
+# MDB-30501: precompile all locales at package build time so that
+# package installation does not run localedef.
+override_dh_auto_build:
+	$(MAKE)
+	scripts/precompile-locales.sh
