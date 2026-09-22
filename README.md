@@ -18,6 +18,7 @@ Usage
 ```
 dpkg-buildpackage -us -uc
 ```
+All supported locales are precompiled at package build time (see `scripts/precompile-locales.sh`) and shipped inside the deb, so package installation no longer runs `localedef`. Note: compiled locale data must be produced by a localedef not newer than the target host glibc, so build the package on the oldest supported distro release.
 
 2. Install the deb packages:
 ```

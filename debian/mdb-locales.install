@@ -4,3 +4,4 @@ debian/src/usr/share/i18n/MDB-SUPPORTED usr/share/i18n
 debian/src/usr/sbin/mdb-locale-gen usr/sbin
 usr/sbin/mdb-locale-normalizer
 debian/src/usr/lib/locale/C.UTF-8 usr/lib/locale
+debian/src/usr/lib/mdb-locale usr/lib
